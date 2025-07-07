@@ -1,10 +1,12 @@
 import app from 'flarum/admin/app';
 import ExtensionPage from 'flarum/admin/components/ExtensionPage';
 import Button from 'flarum/common/components/Button';
+import Select from 'flarum/common/components/Select';
 
 const avatarsSettingKey = 'anonymous-posting.formulaireAvatars';
 const anonymousUsersSettingKey = 'anonymous-posting.anonymousUsers';
 const translationPrefix = 'clarkwinkelmann-anonymous-posting.admin.settings.';
+
 
 interface Avatar {
     formId: string
@@ -18,6 +20,11 @@ interface AnonymousUser {
     isCreatingDiscussion: boolean
     isCreatingPost: boolean
     isEnabled: boolean
+}
+interface Rule {
+  tagId: number;        // ← 用 id
+  imposterId: number;
+                     // 其它字段照旧
 }
 
 app.initializers.add('anonymous-posting', () => {
@@ -59,6 +66,15 @@ app.initializers.add('anonymous-posting', () => {
             help: app.translator.trans(translationPrefix + 'defaultAnonymousUserProfileHelp'),
         })
         .registerSetting(function (this: ExtensionPage) {
+             const tags = app.store.all('tags');
+              if (!tags.length && !this._loadingTags) {
+            this._loadingTags = true;          // 给自己打标记避免死循环
+            app.store.find('tags').then(() => m.redraw());
+        }
+        const tagOptions: Record<string, string> = {};
+        tags.forEach(tag => {
+            tagOptions[tag.id()] = tag.name();
+        });
             let anonymousUsers: AnonymousUser[];
 
             try {
@@ -86,12 +102,17 @@ app.initializers.add('anonymous-posting', () => {
                     ])),
                     m('tbody', [
                         anonymousUsers.map((rule, index) => m('tr', [
-                            m('td', m('input.FormControl', {
-                                type: 'text',
-                                value: rule.tagName || '',
-                                onchange: (event: InputEvent) => {
-                                    rule.tagName = (event.target as HTMLInputElement).value;
-                                    this.setting(anonymousUsersSettingKey)(JSON.stringify(anonymousUsers));
+                            m('td', Select.component({
+                                options: tagOptions,                   // 下拉选项
+                               
+                                value: rule.tagId ? String(rule.tagId) : '',
+                                onchange: (val: string) => {
+                  rule.tagId = parseInt(val, 10);      // 存 ID
+                  // 立刻保存设置
+                  
+                  this.setting(anonymousUsersSettingKey)(
+                    JSON.stringify(anonymousUsers)
+                  );
                                 },
                             })),
                             m('td', m('input.FormControl', {

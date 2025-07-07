@@ -1,11 +1,12 @@
 import app from 'flarum/forum/app';
-import { extend, override} from 'flarum/common/extend';
+import {extend, override} from 'flarum/common/extend';
 import humanTime from 'flarum/common/utils/humanTime';
 import extractText from 'flarum/common/utils/extractText';
 import ItemList from 'flarum/common/utils/ItemList';
 import icon from 'flarum/common/helpers/icon';
 import Button from 'flarum/common/components/Button';
 import Link from 'flarum/common/components/Link';
+import Switch from 'flarum/common/components/Switch';
 import Tooltip from 'flarum/common/components/Tooltip';
 import Model from 'flarum/common/Model';
 import Discussion from 'flarum/common/models/Discussion';
@@ -25,13 +26,14 @@ import TerminalPost from 'flarum/forum/components/TerminalPost';
 import PostPreview from 'flarum/forum/components/PostPreview';
 import PostsUserPage from 'flarum/forum/components/PostsUserPage';
 
-
+function extendComposerInit(this: DiscussionComposer | ReplyComposer) {
+    app.composer.fields!.isAnonymous = !!app.forum.attribute('defaultAnonymousPost');
+}
 
 function extendComposerHeaderItems(this: DiscussionComposer | ReplyComposer, items: ItemList<any>) {
     if (!app.forum.attribute('canAnonymousSwitch')) {
         return;
     }
-
 
     const helpText = app.translator.trans('clarkwinkelmann-anonymous-posting.forum.composerControls.anonymizeHelp');
     const helpTextPosition = app.forum.attribute('anonymousHelpTextPosition');
@@ -380,137 +382,15 @@ app.initializers.add('anonymous-posting', () => {
             return this.attrs.post.attribute('isAnonymous');
         });
     });
-    
-  function getRules(): Record<number, number> {
-  const arr = app.forum.attribute('anonymousUsers') || [];
-  const map: Record<number, number> = {};
 
-  if (!Array.isArray(arr)) return map;
-
-  arr.forEach((r: any) => {
-    let id: number | null = null;
-
-    if (typeof r.tagId === 'number') {
-      id = r.tagId;
-    } else if (typeof r.tagName === 'string') {
-      // 根据 tagName 找到对应模型
-      const tag = app.store.all('tags').find((t: any) => t.name() === r.tagName);
-      if (tag) id = Number(tag.id());
-    }
-
-    if (id !== null && typeof r.userId === 'string') {
-      map[id] = Number(r.userId);
-    }
-  });
-
-  return map;
-}
-function getSelectedTagIds(ctx: any): number[] {
-  // ① 新讨论：标签在 app.composer.fields.tags (Stream<Tag[]>)
-  if (app.composer.fields?.tags) {
-    return app.composer.fields.tags.map((t: any) => Number(t.id()));
-  }
-
-  // ② 回帖：标签从原讨论 relationships.tags 里拿
-  if (
-    ctx instanceof ReplyComposer &&
-    ctx.composer?.body?.attrs?.discussion?.data?.relationships?.tags?.data
-  ) {
-    return ctx.composer.body.attrs.discussion.data.relationships.tags.data.map(
-      (t: any) => Number(t.id)
-    );
-  }
-
-  // ③ 兜底：如果组件自身有 this.tags（旧代码路径）
-  if (ctx.tags) {
-    return (ctx.tags as any[]).map((t) => Number(t.id()));
-  }
-
-  return [];
-}
-  function shouldBeAnonymous(tagIds: number[]) {
-  const rules = getRules();           //  每次最新读取
-
-   let hasEnable = false;   // 是否命中 ≥0
-
-  for (const id of tagIds) {
-    const mode = rules[id];
-    if (mode === undefined) continue;
-
-    if (mode >= 0) hasEnable = true;  // 标记可匿名
-  }
-
-  return hasEnable;        // 只要存在 ≥0 就匿名；否则不匿名
-}
-
-  [DiscussionComposer, ReplyComposer].forEach((Composer) => {
-    // ① 初始化与 tag 变动时重算
-    extend(Composer.prototype, 'oninit', function () {
-      const update = () => {
-        const tagIds = getSelectedTagIds(this);
-        const anon = shouldBeAnonymous(tagIds);
-        this.isAnonymous = anon;
-        if (app.composer?.fields) app.composer.fields.isAnonymous = anon;
-      };
-
-      update();            // 首次
-
-      if (this.tags && this.tags.map) {
-        this.tags.map(() => {
-          update();
-          m.redraw();      // 重新渲染
-        });
-      }
-        // ② 监听 app.composer.fields.tags (DiscussionComposer 场景)
-  if (app.composer.fields?.tags && app.composer.fields.tags.map) {
-    app.composer.fields.tags.map(() => {
-      update();
-      m.redraw();
-    });
-  }
-    });
-
-    // ② 拿掉旧 toggle
-extend(Composer.prototype, 'headerItems', function (items: any) {
-    items.remove('anonymous'); // 保守：确保旧开关彻底消失
-
-    // 如果当前帖子会匿名 ⇒ 显示徽章
-    if (this.isAnonymous) {
-      items.add(
-        'anonymous-indicator',
-        m(
-          'span.AnonIndicator',
-          [
-            m('i.fas.fa-user-secret'),   // font-awesome 图标
-            m('span',{style:{marginLeft:'6px'}}, '已匿名'),
-          ]
-        ),
-        -5   // 放在最左边（数值比其他 header item 小）
-      );
-    }
-   });
-
-    // ③ 保存时确保写入 isAnonymous；支持 imposter
-    extend(Composer.prototype, 'data', function (data: any) {
-      const tagIds = getSelectedTagIds(this);
-      const anon = shouldBeAnonymous(tagIds);
-      data.isAnonymous = anon;  
-
-      if (anon) {
-       const map = getRules();
-       const imposterId = tagIds.find((id) => map[id] > 0);
-        if (imposterId) {
-          data.relationships = data.relationships || {};
-          data.relationships.user = {
-            data: { type: 'users', id: String(map[imposterId]) },
-          };
-        }
-      }
-    });
-  });
-  /* ---------- end tag-based auto-anonymous ---------- */
-
-
+    extend(DiscussionComposer.prototype, 'oninit', extendComposerInit);
+    extend(DiscussionComposer.prototype, 'headerItems', extendComposerHeaderItems);
+    extend(DiscussionComposer.prototype, 'data', extendComposerData);
+    extend(DiscussionComposer.prototype, 'view', extendComposerView);
+    extend(ReplyComposer.prototype, 'oninit', extendComposerInit);
+    extend(ReplyComposer.prototype, 'headerItems', extendComposerHeaderItems);
+    extend(ReplyComposer.prototype, 'data', extendComposerData);
+    extend(ReplyComposer.prototype, 'view', extendComposerView);
 
     extend(DiscussionControls, 'moderationControls', function (items, discussion) {
         if (discussion.attribute('canDeAnonymize')) {
@@ -599,4 +479,3 @@ extend(Composer.prototype, 'headerItems', function (items: any) {
         return returnValue;
     });
 });
-

@@ -24,6 +24,7 @@ use Flarum\Post\Event\Revised;
 use Flarum\Post\Event\Saving as PostSaving;
 use Flarum\Post\Post;
 use Flarum\Settings\Event\Saving as EventSaving;
+use Flarum\Settings\SettingsRepositoryInterface;
 use Flarum\User\User;
 use Kilowhat\Formulaire\Submission;
 
@@ -99,4 +100,13 @@ return [
     (new Extend\ServiceProvider())
         ->register(FakeUserRelation\FakeUserRelationServiceProvider::class)
         ->register(Provider\FilterServiceProvider::class),
+         // 把后台保存的 anonymousUsers 规则挂到 forum.attributes
+    (new Extend\ApiSerializer(ForumSerializer::class))
+        ->attribute('anonymousUsers', function (ForumSerializer $serializer, $model) {
+            /** @var SettingsRepositoryInterface $settings */
+            $settings = resolve(SettingsRepositoryInterface::class);
+
+            // 后台存的是 JSON 字符串（数组）
+            return json_decode($settings->get('anonymous-posting.anonymousUsers', '[]'), true);
+        }),
 ];
