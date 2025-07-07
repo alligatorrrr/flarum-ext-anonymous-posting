@@ -406,10 +406,16 @@ app.initializers.add('anonymous-posting', () => {
   return map;
 }
 function getSelectedTagIds(ctx: any): number[] {
-  // ① 新讨论：标签在 app.composer.fields.tags (Stream<Tag[]>)
-  if (app.composer.fields?.tags) {
-    return app.composer.fields.tags.map((t: any) => Number(t.id()));
-  }
+
+ // DiscussionComposer：this.tags 是 Stream<Tag[]> (函数)，要调用再取数组
+if (ctx.tags && typeof ctx.tags === 'function') {
+  return ctx.tags().map((t: any) => Number(t.id()));
+}
+
+// （保持原来那段，用于 ReplyComposer 场景）
+if (app.composer.fields?.tags && app.composer.fields.tags.map) {
+  return app.composer.fields.tags.map((t: any) => Number(t.id()));
+}
 
   // ② 回帖：标签从原讨论 relationships.tags 里拿
   if (
@@ -462,18 +468,26 @@ function getSelectedTagIds(ctx: any): number[] {
         });
       }
         // ② 监听 app.composer.fields.tags (DiscussionComposer 场景)
-  if (app.composer.fields?.tags && app.composer.fields.tags.map) {
+      if (app.composer.fields?.tags && app.composer.fields.tags.map) {
     app.composer.fields.tags.map(() => {
       update();
-      m.redraw();
+      if (app.composer.body?.attrs?.composer) m.redraw();
+      else m.redraw();  // fallback，桌面/移动都刷新
     });
   }
     });
+    extend(Composer.prototype, 'onupdate', function () {
+  // 每次重绘都再算一次匿名状态
+  const tagIds = getSelectedTagIds(this);
+  const anon   = shouldBeAnonymous(tagIds);
+  this.isAnonymous = anon;
+  if (app.composer?.fields) app.composer.fields.isAnonymous = anon;
+});
 
     // ② 拿掉旧 toggle
 extend(Composer.prototype, 'headerItems', function (items: any) {
     items.remove('anonymous'); // 保守：确保旧开关彻底消失
-
+     console.log('headerItems', this.isAnonymous);
     // 如果当前帖子会匿名 ⇒ 显示徽章
     if (this.isAnonymous) {
       items.add(
