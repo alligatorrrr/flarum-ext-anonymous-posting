@@ -28,10 +28,6 @@ import PostsUserPage from 'flarum/forum/components/PostsUserPage';
 
 
 function extendComposerHeaderItems(this: DiscussionComposer | ReplyComposer, items: ItemList<any>) {
-    if (!app.forum.attribute('canAnonymousSwitch')) {
-        return;
-    }
-
 
     const helpText = app.translator.trans('clarkwinkelmann-anonymous-posting.forum.composerControls.anonymizeHelp');
     const helpTextPosition = app.forum.attribute('anonymousHelpTextPosition');
@@ -58,10 +54,7 @@ function extendComposerData(this: DiscussionComposer | ReplyComposer, data: any)
 }
 
 function extendComposerView(this: DiscussionComposer | ReplyComposer, vdom: any) {
-    if (!app.composer.fields!.isAnonymous) {
-        return;
-    }
-
+  
     if (!vdom || !Array.isArray(vdom.children)) {
         return;
     }
@@ -74,16 +67,28 @@ function extendComposerView(this: DiscussionComposer | ReplyComposer, vdom: any)
 
         // Loop through .ComposerBody children
         vdom.children.forEach((child, index) => {
-            if (!child || !child.attrs || !child.attrs.className || child.attrs.className.indexOf('ComposerBody-avatar') === -1) {
-                return;
-            }
-            if ("tags" in app.composer.fields) {
-                vdom.children[index] = anonymousAvatar(app.forum, '.ComposerBody-avatar', "Discussion", app.composer.fields.tags);
-            } else if (this instanceof ReplyComposer && app.composer.body.attrs.discussion.data.relationships && "tags" in app.composer.body.attrs.discussion.data.relationships) {
-                vdom.children[index] = anonymousAvatar(app.forum, '.ComposerBody-avatar', "Post", app.composer.body.attrs.discussion.data.relationships.tags.data);
-            } else {
-                vdom.children[index] = anonymousAvatar(app.forum, '.ComposerBody-avatar');
-            }
+             // ========== Composer 左侧头像 ==========
+  const tagIds = getSelectedTagIds(this);
+  const composerType = this instanceof DiscussionComposer ? 'Discussion' : 'Post';
+  let selectedTags: any[] = [];
+
+  if (composerType === 'Discussion' && app.composer.fields?.tags) {
+    selectedTags = app.composer.fields.tags;
+  } else if (
+    composerType === 'Post' &&
+    this.composer?.body?.attrs?.discussion?.data?.relationships?.tags?.data
+  ) {
+    selectedTags = this.composer.body.attrs.discussion.data.relationships.tags.data;
+  }
+
+  const anonVNode = anonymousAvatar(app.forum, '', composerType, selectedTags);
+  
+
+  if (anonVNode && anonVNode.attrs && anonVNode.attrs.src) {
+    child.attrs.src = anonVNode.attrs.src;
+    child.attrs.alt = anonVNode.attrs.alt;
+    child.attrs.className += ' Avatar--anonymous';
+  }
         });
     });
 }
@@ -95,25 +100,73 @@ function getAnonymousProfile(profile: { [key: string]: any }) {
     };
 }
 
-function anonymousAvatar(post: Discussion | Post | Forum, className: string = '', composerType?: string, selectedTags?: []) {
+function anonymousAvatar(post, className = '', thirdArg: any = [],
+  fourthArg: any[] = []) {
+     // ---- 参数兼容层 ----
+  let tagIds: number[] = [];
+  let composerType: 'Discussion' | 'Post' = 'Discussion';
+  let selectedTags: any[] = [];
+
+  if (Array.isArray(thirdArg)) {
+    // 新写法：anonymousAvatar(post, cls, tagIds)
+    tagIds = thirdArg;
+  } else {
+    // 旧写法：anonymousAvatar(post, cls, composerType, selectedTags)
+    composerType = thirdArg;
+    selectedTags = fourthArg;
+    // 把 selectedTags 转成 id 数组供后面复用
+    tagIds = selectedTags.map((t: any) =>
+      typeof t.id === 'function' ? Number(t.id()) : Number(t.id)
+    );
+  }
     const anonymousAvatarUrl = post.attribute('anonymousAvatarUrl');
-    const allTags = post.attribute('anonymousImposters');
-    var imageSrc = processDisplayAvatar(anonymousAvatarUrl, composerType, allTags, selectedTags);
-    if (imageSrc) {
-        if (imageSrc.url) {
-            return m('img.Avatar.Avatar--anonymous' + className, {
-                src: imageSrc.url,
-                alt: imageSrc.alt,
-            });
-        } else {
-            return m('span.Avatar ComposerBody-avatar' + className, {
-                alt: imageSrc.alt,
-                style: '--avatar-bg: #a0e5b3;',
-            }, imageSrc.alt.charAt(0).toUpperCase());
-        }
+    const imposters          = post.attribute('anonymousImposters') || {};
+   /* ---------- 1. tag-specific imposter ---------- */
+    let imageSrc: { url?: string; alt: string } | null = null;
+
+    tagIds.forEach((id) => {
+    if (imposters[id]) {
+      imageSrc = {
+        url: imposters[id].user_avatar_url,
+        alt: imposters[id].user_username,
+      };
+     }
+    });
+    // fallback：通用匿名头像
+    if (!imageSrc && anonymousAvatarUrl) {
+    imageSrc = {
+      url: anonymousAvatarUrl,
+      alt: app.translator.trans(
+        'clarkwinkelmann-anonymous-posting.lib.userMeta.username'
+      ),
+    };
+  }
+ /* ---------- 3. 渲染 ---------- */
+  if (imageSrc) {
+    if (imageSrc.url) {
+      return m('img.Avatar.Avatar--anonymous' + className, {
+        src: imageSrc.url,
+        alt: imageSrc.alt,
+      });
     }
 
-    return m('span.Avatar.Avatar--anonymous' + className, app.translator.trans('clarkwinkelmann-anonymous-posting.lib.userMeta.initials'));
+    return m(
+      'span.Avatar.Avatar--anonymous' + className,
+      {
+        alt: imageSrc.alt,
+        style: '--avatar-bg:#D52B1E',
+      },
+      imageSrc.alt.charAt(0).toUpperCase()
+    );
+  }
+
+  /* ---------- 4. 最后兜底：缩写字母 ---------- */
+  return m(
+    'span.Avatar.Avatar--anonymous' + className,
+    app.translator.trans(
+      'clarkwinkelmann-anonymous-posting.lib.userMeta.initials'
+    )
+  );
 }
 
 function processDisplayAvatar(anonymousAvatarUrl, composerType, allTags, selectedTags) {
@@ -257,14 +310,19 @@ app.initializers.add('anonymous-posting', () => {
                         }
 
                         // Replace preview avatar
-                        if (child.attrs.className.indexOf('PostUser-avatar') !== -1) {
-                            if (app.composer.body.attrs.discussion.data.relationships && "tags" in app.composer.body.attrs.discussion.data.relationships) {
-                                // Replace preview avatar with specific tags settings
-                                vdom3.children[index] = anonymousAvatar(app.forum, '.PostUser-avatar', "Post", app.composer.body.attrs.discussion.data.relationships.tags.data);
-                            } else {
-                                vdom3.children[index] = anonymousAvatar(app.forum, '.PostUser-avatar');
-                            }
-                        }
+                        if (child.attrs.className.indexOf('Avatar') !== -1) {
+                           // ① 先算 tagIds（无标签时就是 []）
+                          const tagIds =
+                          (app.composer.body.attrs.discussion.data.relationships.tags.data || [])
+                          .map((t: any) => Number(t.id));
+
+                        // ② 不再传 "Post" & tags 数组，而是只传 tagIds
+                        vdom3.children[index] = anonymousAvatar(
+                        app.forum,
+                       '.PostUser-avatar',
+                       tagIds
+                        );
+                       }
 
                         // Replace preview username
                         if (child.attrs.className === 'username') {
@@ -483,11 +541,35 @@ if (app.composer.fields?.tags && app.composer.fields.tags.map) {
   this.isAnonymous = anon;
   if (app.composer?.fields) app.composer.fields.isAnonymous = anon;
 });
-
+extend(Composer.prototype, 'onupdate', function () {
+    // 找到左侧头像 <span class="Avatar ComposerBody-avatar">
+  const $avatar = this.$('.ComposerBody-avatar').first();
+  if (!$avatar.length) return;   // 还没渲染出来
+  if (this.isAnonymous) {
+     // 匿名状态：显示“匿”字并套灰色背景
+    $avatar
+      .addClass('Avatar--anonymous')
+      .text(app.translator.trans('clarkwinkelmann-anonymous-posting.lib.userMeta.initials'))
+      .css('--avatar-bg', '#D52B1E');
+  } else {
+    // 取消匿名 → 恢复成登录用户头像
+    const me = app.session.user!;
+    $avatar   
+      .removeClass('Avatar--anonymous')
+      .text((me.username() || '').charAt(0).toUpperCase())
+      .css('--avatar-bg', me.color() || '');
+  }
+});
     // ② 拿掉旧 toggle
 extend(Composer.prototype, 'headerItems', function (items: any) {
     items.remove('anonymous'); // 保守：确保旧开关彻底消失
-     console.log('headerItems', this.isAnonymous);
+     
+     // 每次渲染都重新计算匿名状态
+  const tagIds = getSelectedTagIds(this);
+  const anon   = shouldBeAnonymous(tagIds);
+  // 同步到组件和 app.composer，供其他逻辑用
+  this.isAnonymous = anon;
+  if (app.composer?.fields) app.composer.fields.isAnonymous = anon;
     // 如果当前帖子会匿名 ⇒ 显示徽章
     if (this.isAnonymous) {
       items.add(
@@ -497,6 +579,7 @@ extend(Composer.prototype, 'headerItems', function (items: any) {
           [
             m('i.fas.fa-user-secret'),   // font-awesome 图标
             m('span',{style:{marginLeft:'6px'}}, '已匿名'),
+            m('span',{style:{marginLeft:'6px', fontWeight: 'lighter'}}, '匿名需要遵循组规；修改标题和分区无法匿名'),
           ]
         ),
         -5   // 放在最左边（数值比其他 header item 小）
